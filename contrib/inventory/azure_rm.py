@@ -237,7 +237,9 @@ AZURE_CONFIG_SETTINGS = dict(
     group_by_resource_group='AZURE_GROUP_BY_RESOURCE_GROUP',
     group_by_location='AZURE_GROUP_BY_LOCATION',
     group_by_security_group='AZURE_GROUP_BY_SECURITY_GROUP',
-    group_by_tag='AZURE_GROUP_BY_TAG'
+    group_by_tag='AZURE_GROUP_BY_TAG',
+    add_tags_as_hostvars='AZURE_ADD_TAGS_AS_HOSTVARS',
+    tags_as_hostvars='AZURE_TAGS_AS_HOSTVARS'
 )
 
 AZURE_MIN_VERSION = "2.0.0"
@@ -472,6 +474,8 @@ class AzureInventory(object):
         self.group_by_security_group = True
         self.group_by_tag = True
         self.include_powerstate = True
+        self.add_tags_as_hostvars = False
+        self.tags_as_hostvars = None
 
         self._inventory = dict(
             _meta=dict(
@@ -493,6 +497,12 @@ class AzureInventory(object):
 
         if self._args.no_powerstate:
             self.include_powerstate = False
+
+        if self._args.add_tags_as_hostvars:
+            self.add_tags_as_hostvars = True
+
+        if self._args.tags_as_hostvars:
+            self.tags_as_hostvars = self._args.tags_as_hostvars.split(',')
 
         self.get_inventory()
         print(self._json_format_dict(pretty=self._args.pretty))
@@ -534,6 +544,10 @@ class AzureInventory(object):
                             help='Return inventory for comma separated list of locations')
         parser.add_argument('--no-powerstate', action='store_true', default=False,
                             help='Do not include the power state of each virtual host')
+        parser.add_argument('--add-tags-as-hostvars', action='store_true', default=False,
+                            help='Additionally add tags as top level hostvars')
+        parser.add_argument('--tags-as-hostvars', action='store',
+                            help='Control which tags are added as top level hostvars with a comma separated list of keys or key:value pairs')
         return parser.parse_args()
 
     def get_inventory(self):
@@ -613,6 +627,14 @@ class AzureInventory(object):
                     sku=machine.storage_profile.image_reference.sku,
                     version=machine.storage_profile.image_reference.version
                 )
+
+            if self.add_tags_as_hostvars and machine.tags:
+                for tag_key, tag_value in machine.tags.items():
+                    if self.tags_as_hostvars:
+                        if tag_key in self.tags_as_hostvars:
+                            host_vars[tag_key] = tag_value
+                    else:
+                        host_vars[tag_key] = tag_value
 
             # Add windows details
             if machine.os_profile is not None and machine.os_profile.windows_configuration is not None:
