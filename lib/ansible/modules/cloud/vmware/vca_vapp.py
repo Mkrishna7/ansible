@@ -1,16 +1,14 @@
 #!/usr/bin/python
 
-# Copyright (c) 2015 Ansible, Inc.
+# Copyright: (c) 2015, Ansible, Inc.
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-
 ANSIBLE_METADATA = {'metadata_version': '1.1',
                     'status': ['preview'],
                     'supported_by': 'community'}
-
 
 DOCUMENTATION = '''
 ---
@@ -20,7 +18,8 @@ description:
   - This module will actively managed vCloud Air vApp instances.  Instances
     can be created and deleted as well as both deployed and undeployed.
 version_added: "2.0"
-author: Peter Sprygada (@privateip)
+author:
+- Peter Sprygada (@privateip)
 options:
   vapp_name:
     description:
@@ -120,6 +119,7 @@ options:
       - The name of the virtual data center (VDC) where the vm should be created or contains the vAPP.
     required: false
     default: None
+extends_documentation_fragment: vca
 '''
 
 EXAMPLES = '''
@@ -165,6 +165,7 @@ def get_instance(module):
     except VcaError:
         return inst
 
+
 def create(module):
     vdc_name = module.params['vdc_name']
     vapp_name = module.params['vapp_name']
@@ -187,10 +188,12 @@ def create(module):
 
     module.vca.block_until_completed(task)
 
+
 def delete(module):
     vdc_name = module.params['vdc_name']
     vapp_name = module.params['vapp_name']
     module.vca.delete_vapp(vdc_name, vapp_name)
+
 
 def do_operation(module):
     vapp_name = module.params['vapp_name']
@@ -208,6 +211,7 @@ def do_operation(module):
 
     cmd = 'power:%s' % operation
     module.get_vapp(vapp_name).execute(cmd, 'post', targetVM=vm)
+
 
 def set_state(module):
     state = module.params['state']

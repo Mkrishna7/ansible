@@ -1,22 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# (c) 2014, Trond Hindenes <trond@hindenes.com>
-#
-# This file is part of Ansible
-#
-# Ansible is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# Ansible is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+# Copyright: (c) 2014, Trond Hindenes <trond@hindenes.com>
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # this is a windows documentation stub.  actual code lives in the .ps1
 # file of the same name
@@ -133,6 +119,9 @@ notes:
 - When using verbosity 4 (C(-vvvv)) the C(stdout) output will be more verbose.
 - When using verbosity 5 (C(-vvvvv)) the C(stdout) output will include debug output.
 - This module will install or upgrade Chocolatey when needed.
+- Some packages need an interactive user logon in order to install.  You can use (C(become)) to achieve this.
+- Even if you are connecting as local Administrator, using (C(become)) to become Administrator will give you an interactive user logon, see examples below.
+- Use (M(win_hotfix) to install hotfixes instead of (M(win_chocolatey)) as (M(win_hotfix)) avoids using wusa.exe which cannot be run remotely.
 author:
 - Trond Hindenes (@trondhindenes)
 - Peter Mounce (@petemounce)
@@ -173,10 +162,10 @@ EXAMPLES = r'''
     name: git
     state: absent
 
-- name: install multiple packages
+- name: Install multiple packages
   win_chocolatey:
     name: '{{ item }}'
-    state: absent
+    state: present
   with_items:
   - pscx
   - windirstat
@@ -202,6 +191,13 @@ EXAMPLES = r'''
     proxy_url: http://proxy-server:8080/
     proxy_username: user with \"escaped\" double quotes
     proxy_password: pass with \"escaped\" double quotes
+
+- name: Install a package that requires 'become'
+  win_chocolatey:
+    name: officepro2013
+  become: yes
+  become_user: Administrator
+  become_method: runas
 '''
 
 RETURN = r'''

@@ -69,7 +69,7 @@ options:
         default: null
     comparison_results_file:
         description:
-            - Name of the file where snapshots comparison will be store.
+            - Name of the file where snapshots comparison will be stored when C(action=compare).
         required: false
         default: null
     compare_option:
@@ -171,8 +171,8 @@ import os
 import re
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.nxos import load_config, run_commands
-from ansible.module_utils.nxos import nxos_argument_spec, check_args
+from ansible.module_utils.network.nxos.nxos import load_config, run_commands
+from ansible.module_utils.network.nxos.nxos import nxos_argument_spec, check_args
 
 
 def execute_show_command(command, module):
@@ -191,8 +191,8 @@ def get_existing(module):
     body = execute_show_command(command, module)[0]
     if body:
         split_body = body.splitlines()
-        snapshot_regex = ('(?P<name>\S+)\s+(?P<date>\w+\s+\w+\s+\d+\s+\d+'
-                          ':\d+:\d+\s+\d+)\s+(?P<description>.*)')
+        snapshot_regex = (r'(?P<name>\S+)\s+(?P<date>\w+\s+\w+\s+\d+\s+\d+'
+                          r':\d+:\d+\s+\d+)\s+(?P<description>.*)')
         for snapshot in split_body:
             temp = {}
             try:
@@ -229,7 +229,7 @@ def action_add(module, existing_snapshots):
     body = execute_show_command(command, module)[0]
 
     if body:
-        section_regex = '.*\[(?P<section>\S+)\].*'
+        section_regex = r'.*\[(?P<section>\S+)\].*'
         split_body = body.split('\n\n')
         for section in split_body:
             temp = {}
@@ -333,6 +333,7 @@ def write_on_file(content, filename, module):
 
     return filepath
 
+
 def main():
     argument_spec = dict(
         action=dict(required=True, choices=['create', 'add', 'compare', 'delete', 'delete_all']),
@@ -353,7 +354,13 @@ def main():
 
     argument_spec.update(nxos_argument_spec)
 
+    required_if = [("action", "compare", ["snapshot1", "snapshot2", "comparison_results_file"]),
+                   ("action", "create", ["snapshot_name", "description"]),
+                   ("action", "add", ["section", "show_command", "row_id", "element_key1"]),
+                   ("action", "delete", ["snapshot_name"])]
+
     module = AnsibleModule(argument_spec=argument_spec,
+                           required_if=required_if,
                            supports_check_mode=True)
 
     warnings = list()
@@ -362,32 +369,9 @@ def main():
     action = module.params['action']
     comparison_results_file = module.params['comparison_results_file']
 
-    CREATE_PARAMS = ['snapshot_name', 'description']
-    ADD_PARAMS = ['section', 'show_command', 'row_id', 'element_key1']
-    COMPARE_PARAMS = ['snapshot1', 'snapshot2', 'comparison_results_file']
-
     if not os.path.isdir(module.params['path']):
         module.fail_json(msg='{0} is not a valid directory name.'.format(
             module.params['path']))
-
-    if action == 'create':
-        for param in CREATE_PARAMS:
-            if not module.params[param]:
-                module.fail_json(msg='snapshot_name and description are '
-                                     'required when action=create')
-    elif action == 'add':
-        for param in ADD_PARAMS:
-            if not module.params[param]:
-                module.fail_json(msg='section, show_command, row_id '
-                                     'and element_key1 are required '
-                                     'when action=add')
-    elif action == 'compare':
-        for param in COMPARE_PARAMS:
-            if not module.params[param]:
-                module.fail_json(msg='snapshot1 and snapshot2 are required '
-                                     'when action=create')
-    elif action == 'delete' and not module.params['snapshot_name']:
-        module.fail_json(msg='snapshot_name is required when action=delete')
 
     existing_snapshots = invoke('get_existing', module)
     action_results = invoke('action_%s' % action, module, existing_snapshots)
@@ -397,13 +381,28 @@ def main():
     if not module.check_mode:
         if action == 'compare':
             result['commands'] = []
+
+            if module.params['path'] and comparison_results_file:
+                snapshot1 = module.params['snapshot1']
+                snapshot2 = module.params['snapshot2']
+                compare_option = module.params['compare_option']
+                command = 'show snapshot compare {0} {1} {2}'.format(snapshot1, snapshot2, compare_option)
+                content = execute_show_command(command, module)[0]
+                if content:
+                    write_on_file(content, comparison_results_file, module)
         else:
             if action_results:
                 load_config(module, action_results)
                 result['commands'] = action_results
                 result['changed'] = True
 
+            if action == 'create' and module.params['path']:
+                command = 'show snapshot | include {}'.format(module.params['snapshot_name'])
+                content = execute_show_command(command, module)[0]
+                if content:
+                    write_on_file(content, module.params['snapshot_name'], module)
+
     module.exit_json(**result)
 
 if __name__ == '__main__':
-        main()
+    main()

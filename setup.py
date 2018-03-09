@@ -218,7 +218,11 @@ setup(
         'bin/ansible-console',
         'bin/ansible-connection',
         'bin/ansible-vault',
+        'bin/ansible-config',
+        'bin/ansible-inventory',
     ],
     data_files=[],
-    extras_require=extra_requirements
+    extras_require=extra_requirements,
+    # Installing as zip files would break due to references to __file__
+    zip_safe=False
 )

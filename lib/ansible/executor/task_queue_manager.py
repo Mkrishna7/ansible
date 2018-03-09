@@ -27,6 +27,7 @@ from ansible import constants as C
 from ansible.errors import AnsibleError
 from ansible.executor.play_iterator import PlayIterator
 from ansible.executor.stats import AggregateStats
+from ansible.executor.task_result import TaskResult
 from ansible.module_utils.six import string_types
 from ansible.module_utils._text import to_text
 from ansible.playbook.block import Block
@@ -176,7 +177,12 @@ class TaskQueueManager:
                 raise AnsibleError("Invalid callback for stdout specified: %s" % self._stdout_callback)
             else:
                 self._stdout_callback = callback_loader.get(self._stdout_callback)
-                self._stdout_callback.set_options(C.config.get_plugin_options('callback', self._stdout_callback._load_name))
+                try:
+                    self._stdout_callback.set_options()
+                except AttributeError:
+                    display.deprecated("%s stdout callback, does not support setting 'options', it will work for now, "
+                                       " but this will be required in the future and should be updated,"
+                                       " see the 2.4 porting guide for details." % self._stdout_callback._load_name, version="2.9")
                 stdout_callback_loaded = True
         else:
             raise AnsibleError("callback must be an instance of CallbackBase or the name of a callback plugin")
@@ -200,7 +206,12 @@ class TaskQueueManager:
                     continue
 
             callback_obj = callback_plugin()
-            callback_obj .set_options(C.config.get_plugin_options('callback', callback_plugin._load_name))
+            try:
+                callback_obj.set_options()
+            except AttributeError:
+                    display.deprecated("%s callback, does not support setting 'options', it will work for now, "
+                                       " but this will be required in the future and should be updated, "
+                                       " see the 2.4 porting guide for details." % self._stdout_callback._load_name, version="2.9")
             self._callback_plugins.append(callback_obj)
 
         self._callbacks_loaded = True
@@ -231,22 +242,6 @@ class TaskQueueManager:
             loader=self._loader,
         )
 
-        # Fork # of forks, # of hosts or serial, whichever is lowest
-        num_hosts = len(self._inventory.get_hosts(new_play.hosts, ignore_restrictions=True))
-
-        max_serial = 0
-        if new_play.serial:
-            # the play has not been post_validated here, so we may need
-            # to convert the scalar value to a list at this point
-            serial_items = new_play.serial
-            if not isinstance(serial_items, list):
-                serial_items = [serial_items]
-            max_serial = max([pct_to_int(x, num_hosts) for x in serial_items])
-
-        contenders = [self._options.forks, max_serial, num_hosts]
-        contenders = [v for v in contenders if v is not None and v > 0]
-        self._initialize_processes(min(contenders))
-
         play_context = PlayContext(new_play, self._options, self.passwords, self._connection_lockfile.fileno())
         for callback_plugin in self._callback_plugins:
             if hasattr(callback_plugin, 'set_play_context'):
@@ -257,11 +252,6 @@ class TaskQueueManager:
         # initialize the shared dictionary containing the notified handlers
         self._initialize_notified_handlers(new_play)
 
-        # load the specified strategy (or the default linear one)
-        strategy = strategy_loader.get(new_play.strategy, self)
-        if strategy is None:
-            raise AnsibleError("Invalid play strategy specified: %s" % new_play.strategy, obj=play._ds)
-
         # build the iterator
         iterator = PlayIterator(
             inventory=self._inventory,
@@ -271,6 +261,14 @@ class TaskQueueManager:
             all_vars=all_vars,
             start_at_done=self._start_at_done,
         )
+
+        # adjust to # of workers to configured forks or size of batch, whatever is lower
+        self._initialize_processes(min(self._options.forks, iterator.batch_size))
+
+        # load the specified strategy (or the default linear one)
+        strategy = strategy_loader.get(new_play.strategy, self)
+        if strategy is None:
+            raise AnsibleError("Invalid play strategy specified: %s" % new_play.strategy, obj=play._ds)
 
         # Because the TQM may survive multiple play runs, we start by marking
         # any hosts as failed in the iterator here which may have been marked
@@ -361,9 +359,20 @@ class TaskQueueManager:
                 if gotit is not None:
                     methods.append(gotit)
 
+            # send clean copies
+            new_args = []
+            for arg in args:
+                # FIXME: add play/task cleaners
+                if isinstance(arg, TaskResult):
+                    new_args.append(arg.clean_copy())
+                # elif isinstance(arg, Play):
+                # elif isinstance(arg, Task):
+                else:
+                    new_args.append(arg)
+
             for method in methods:
                 try:
-                    method(*args, **kwargs)
+                    method(*new_args, **kwargs)
                 except Exception as e:
                     # TODO: add config toggle to make this fatal or not?
                     display.warning(u"Failure using method (%s) in callback plugin (%s): %s" % (to_text(method_name), to_text(callback_plugin), to_text(e)))

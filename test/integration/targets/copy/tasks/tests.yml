@@ -9,10 +9,6 @@
   set_fact:
     remote_file: "{{ remote_dir }}/foo.txt"
 
-- name: Locate sha1sum/shasum
-  shell: which sha1sum || which shasum
-  register: sha1sum
-
 - name: Initiate a basic copy, and also test the mode
   copy:
     src: foo.txt
@@ -37,6 +33,7 @@
 
 - set_fact:
     remote_dir_expanded: '{{ echo.stdout }}'
+    remote_file_expanded: '{{ echo.stdout }}/foo.txt'
 
 - debug:
     var: copy_result
@@ -46,7 +43,7 @@
   assert:
     that:
       - "'changed' in copy_result"
-      - "'dest' in copy_result"
+      - copy_result.dest == remote_file_expanded
       - "'group' in copy_result"
       - "'gid' in copy_result"
       - "'md5sum' in copy_result"
@@ -76,6 +73,7 @@
 - name: Check the stat results of the file
   stat:
     path: "{{ remote_file }}"
+    get_md5: yes
   register: stat_results
 
 - debug:
@@ -102,17 +100,32 @@
   copy:
     src: foo.txt
     dest: "{{ remote_file }}"
+    decrypt: no
   register: copy_result2
 
 - name: Assert that the file was not changed
   assert:
     that:
-      - "not copy_result2|changed"
+      - "copy_result2 is not changed"
+
+- name: Assert basic copy worked
+  assert:
+    that:
+      - "'changed' in copy_result2"
+      - copy_result2.dest == remote_file_expanded
+      - "'group' in copy_result2"
+      - "'gid' in copy_result2"
+      - "'checksum' in copy_result2"
+      - "'owner' in copy_result2"
+      - "'size' in copy_result2"
+      - "'state' in copy_result2"
+      - "'uid' in copy_result2"
 
 - name: Overwrite the file using the content system
   copy:
     content: "modified"
     dest: "{{ remote_file }}"
+    decrypt: no
   register: copy_result3
 
 - name: Check the stat results of the file
@@ -127,7 +140,7 @@
 - name: Assert that the file has changed
   assert:
      that:
-       - "copy_result3|changed"
+       - "copy_result3 is changed"
        - "'content' not in copy_result3"
        - "stat_results.stat.checksum == ('modified'|hash('sha1'))"
        - "stat_results.stat.mode != '0700'"
@@ -137,6 +150,7 @@
     content: "modified"
     dest: "{{ remote_file }}"
     mode: 0700
+    decrypt: no
   register: copy_result4
 
 - name: Check the stat results of the file
@@ -151,7 +165,7 @@
 - name: Assert that the file has changed
   assert:
      that:
-       - "copy_result3|changed"
+       - "copy_result3 is changed"
        - "'content' not in copy_result3"
        - "stat_results.stat.checksum == ('modified'|hash('sha1'))"
        - "stat_results.stat.mode == '0700'"
@@ -167,6 +181,7 @@
     content: 'modified'
     dest: '{{ remote_file }}'
     mode: 0700
+    decrypt: no
   register: copy_results
 
 - name: Check the stat results of the file
@@ -191,6 +206,7 @@
     content: 'modified'
     dest: '{{ remote_file }}'
     mode: 0404
+    decrypt: no
   register: copy_results
 
 - name: Check the stat results of the file
@@ -264,7 +280,7 @@
 - name: Assert that empty source failed
   assert:
     that:
-      - failed_copy | failed
+      - failed_copy is failed
       - "'src (or content) is required' in failed_copy.msg"
 
 - name: Try without destination to ensure it fails
@@ -280,7 +296,7 @@
 - name: Assert that missing destination failed
   assert:
     that:
-      - failed_copy | failed
+      - failed_copy is failed
       - "'dest is required' in failed_copy.msg"
 
 - name: Try without source to ensure it fails
@@ -296,7 +312,7 @@
 - name: Assert that missing source failed
   assert:
     that:
-      - failed_copy | failed
+      - failed_copy is failed
       - "'src (or content) is required' in failed_copy.msg"
 
 - name: Try with both src and content to ensure it fails
@@ -310,7 +326,7 @@
 - name: Assert that mutually exclusive parameters failed
   assert:
     that:
-      - failed_copy | failed
+      - failed_copy is failed
       - "'mutually exclusive' in failed_copy.msg"
 
 - name: Try with content and directory as destination to ensure it fails
@@ -327,7 +343,7 @@
 - name: Assert that content and directory as destination failed
   assert:
     that:
-      - failed_copy | failed
+      - failed_copy is failed
       - "'can not use content with a dir as dest' in failed_copy.msg"
 
 - name: Clean up
@@ -354,7 +370,7 @@
 - name: Assert that the file has changed
   assert:
      that:
-       - "copy_results|changed"
+       - "copy_results is changed"
        - "stat_results.stat.checksum == ('foo.txt\n'|hash('sha1'))"
        - "stat_results.stat.mode == '0500'"
 
@@ -381,7 +397,7 @@
 - name: Assert that the file has changed and has correct mode
   assert:
      that:
-       - "copy_results|changed"
+       - "copy_results is changed"
        - "copy_results.mode == '0547'"
        - "stat_results.stat.checksum == ('foo.txt\n'|hash('sha1'))"
        - "stat_results.stat.mode == '0547'"
@@ -432,7 +448,7 @@
 - name: Assert that the recursive copy did something
   assert:
     that:
-      - "recursive_copy_result|changed"
+      - "recursive_copy_result is changed"
 
 - name: Check that a file in a directory was transferred
   stat:
@@ -542,7 +558,7 @@
 - name: Assert that the second copy did not change anything
   assert:
     that:
-      - "not recursive_copy_result|changed"
+      - "recursive_copy_result is not changed"
 
 - name: Cleanup the recursive copy subdir
   file:
@@ -589,7 +605,7 @@
 - name: Assert that the recursive copy did something
   assert:
     that:
-      - "recursive_copy_result|changed"
+      - "recursive_copy_result is changed"
 
 - name: Check that a file in a directory was transferred
   stat:
@@ -697,7 +713,7 @@
 - name: Assert that the second copy did not change anything
   assert:
     that:
-      - "not recursive_copy_result|changed"
+      - "recursive_copy_result is not changed"
 
 - name: Cleanup the recursive copy subdir
   file:
@@ -744,7 +760,7 @@
 - name: Assert that the recursive copy did something
   assert:
     that:
-      - "recursive_copy_result|changed"
+      - "recursive_copy_result is changed"
 
 - name: Check that a file in a directory was transferred
   stat:
@@ -862,7 +878,7 @@
 - name: Assert that the second copy did not change anything
   assert:
     that:
-      - "not recursive_copy_result|changed"
+      - "recursive_copy_result is not changed"
 
 - name: Cleanup the recursive copy subdir
   file:
@@ -1121,7 +1137,7 @@
     - stat_link_result.stat.islnk
 
 - name: Get the checksum of the link target
-  shell: "{{ sha1sum.stdout }} {{remote_dir}}/follow_test | cut -f1 -sd ' '"
+  shell: "{{ ansible_python_interpreter }} -c 'import hashlib; print(hashlib.sha1(open(\"{{remote_dir | expanduser}}/follow_test\", \"rb\").read()).hexdigest())'"
   register: target_file_result
 
 - name: Assert that the link target was updated
@@ -1148,7 +1164,7 @@
 - name: Assert that the file has changed and is not a link
   assert:
      that:
-       - "copy_results|changed"
+       - "copy_results is changed"
        - "'content' not in copy_results"
        - "stat_results.stat.checksum == ('modified'|hash('sha1'))"
        - "not stat_results.stat.islnk"
@@ -1255,6 +1271,60 @@
     - stat_file_in_dir_result.stat.isreg
     - stat_circular_symlink_result.stat.exists
     - stat_circular_symlink_result.stat.islnk
+
+# Relative paths in dest:
+- name: Smoketest that copying content to an implicit relative path works
+  copy:
+    content: 'testing'
+    dest: 'ansible-testing.txt'
+  register: relative_results
+
+- name: Assert that copying to an implicit relative path reported changed
+  assert:
+    that:
+      - 'relative_results["changed"]'
+      - 'relative_results["checksum"] == "dc724af18fbdd4e59189f5fe768a5f8311527050"'
+
+- name: Test that copying the same content with an implicit relative path reports no change
+  copy:
+    content: 'testing'
+    dest: 'ansible-testing.txt'
+  register: relative_results
+
+- name: Assert that copying the same content with an implicit relative path reports no change
+  assert:
+    that:
+      - 'not relative_results["changed"]'
+      - 'relative_results["checksum"] == "dc724af18fbdd4e59189f5fe768a5f8311527050"'
+
+- name: Test that copying different content with an implicit relative path reports change
+  copy:
+    content: 'testing2'
+    dest: 'ansible-testing.txt'
+  register: relative_results
+
+- name: Assert that copying different content with an implicit relative path reports changed
+  assert:
+    that:
+      - 'relative_results["changed"]'
+      - 'relative_results["checksum"] == "596b29ec9afea9e461a20610d150939b9c399d93"'
+
+- name: Smoketest that explicit relative path works
+  copy:
+    content: 'testing'
+    dest: './ansible-testing.txt'
+  register: relative_results
+
+- name: Assert that explicit relative paths reports change
+  assert:
+    that:
+      - 'relative_results["changed"]'
+      - 'relative_results["checksum"] == "dc724af18fbdd4e59189f5fe768a5f8311527050"'
+
+- name: Cleanup relative path tests
+  file:
+    path: 'ansible-testing.txt'
+    state: absent
 
 # src is a file, dest is a non-existent directory (2 levels of directories):
 # checks that dest is created

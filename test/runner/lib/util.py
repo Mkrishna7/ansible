@@ -2,19 +2,50 @@
 
 from __future__ import absolute_import, print_function
 
-import abc
+import atexit
 import errno
+import filecmp
+import fcntl
 import inspect
+import json
 import os
 import pipes
 import pkgutil
-import shutil
-import subprocess
+import random
 import re
+import shutil
+import stat
+import string
+import subprocess
 import sys
+import tempfile
 import time
 
-ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})  # compatible with Python 2 *and* 3
+from struct import unpack, pack
+from termios import TIOCGWINSZ
+
+try:
+    from abc import ABC
+except ImportError:
+    from abc import ABCMeta
+    ABC = ABCMeta('ABC', (), {})
+
+DOCKER_COMPLETION = {}
+
+coverage_path = ''  # pylint: disable=locally-disabled, invalid-name
+
+
+def get_docker_completion():
+    """
+    :rtype: dict[str, str]
+    """
+    if not DOCKER_COMPLETION:
+        with open('test/runner/completion/docker.txt', 'r') as completion_fd:
+            images = completion_fd.read().splitlines()
+
+        DOCKER_COMPLETION.update(dict((i.split('@')[0], i) for i in images))
+
+    return DOCKER_COMPLETION
 
 
 def is_shippable():
@@ -30,6 +61,51 @@ def remove_file(path):
     """
     if os.path.isfile(path):
         os.remove(path)
+
+
+def find_pip(path=None, version=None):
+    """
+    :type path: str | None
+    :type version: str | None
+    :rtype: str
+    """
+    if version:
+        version_info = version.split('.')
+        python_bin = find_executable('python%s' % version, path=path)
+    else:
+        version_info = sys.version_info
+        python_bin = sys.executable
+
+    choices = (
+        'pip%s' % '.'.join(str(i) for i in version_info[:2]),
+        'pip%s' % version_info[0],
+        'pip',
+    )
+
+    pip = None
+
+    for choice in choices:
+        pip = find_executable(choice, required=False, path=path)
+
+        if pip:
+            break
+
+    if not pip:
+        raise ApplicationError('Required program not found: %s' % ', '.join(choices))
+
+    with open(pip) as pip_fd:
+        shebang = pip_fd.readline().strip()
+
+    if not shebang.startswith('#!') or ' ' in shebang:
+        raise ApplicationError('Unexpected shebang in "%s": %s' % (pip, shebang))
+
+    our_python = os.path.realpath(python_bin)
+    pip_python = os.path.realpath(shebang[2:])
+
+    if our_python != pip_python and not filecmp.cmp(our_python, pip_python, False):
+        raise ApplicationError('Current interpreter "%s" does not match "%s" interpreter "%s".' % (our_python, pip, pip_python))
+
+    return pip
 
 
 def find_executable(executable, cwd=None, path=None, required=True):
@@ -84,6 +160,104 @@ def find_executable(executable, cwd=None, path=None, required=True):
     return match
 
 
+def intercept_command(args, cmd, target_name, capture=False, env=None, data=None, cwd=None, python_version=None, path=None):
+    """
+    :type args: TestConfig
+    :type cmd: collections.Iterable[str]
+    :type target_name: str
+    :type capture: bool
+    :type env: dict[str, str] | None
+    :type data: str | None
+    :type cwd: str | None
+    :type python_version: str | None
+    :type path: str | None
+    :rtype: str | None, str | None
+    """
+    if not env:
+        env = common_environment()
+
+    cmd = list(cmd)
+    inject_path = get_coverage_path(args)
+    config_path = os.path.join(inject_path, 'injector.json')
+    version = python_version or args.python_version
+    interpreter = find_executable('python%s' % version, path=path)
+    coverage_file = os.path.abspath(os.path.join(inject_path, '..', 'output', '%s=%s=%s=%s=coverage' % (
+        args.command, target_name, args.coverage_label or 'local-%s' % version, 'python-%s' % version)))
+
+    env['PATH'] = inject_path + os.pathsep + env['PATH']
+    env['ANSIBLE_TEST_PYTHON_VERSION'] = version
+    env['ANSIBLE_TEST_PYTHON_INTERPRETER'] = interpreter
+
+    config = dict(
+        python_interpreter=interpreter,
+        coverage_file=coverage_file if args.coverage else None,
+    )
+
+    if not args.explain:
+        with open(config_path, 'w') as config_fd:
+            json.dump(config, config_fd, indent=4, sort_keys=True)
+
+    return run_command(args, cmd, capture=capture, env=env, data=data, cwd=cwd)
+
+
+def get_coverage_path(args):
+    """
+    :type args: TestConfig
+    :rtype: str
+    """
+    global coverage_path  # pylint: disable=locally-disabled, global-statement, invalid-name
+
+    if coverage_path:
+        return os.path.join(coverage_path, 'coverage')
+
+    prefix = 'ansible-test-coverage-'
+    tmp_dir = '/tmp'
+
+    if args.explain:
+        return os.path.join(tmp_dir, '%stmp' % prefix, 'coverage')
+
+    src = os.path.abspath(os.path.join(os.getcwd(), 'test/runner/injector/'))
+
+    coverage_path = tempfile.mkdtemp('', prefix, dir=tmp_dir)
+    os.chmod(coverage_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+
+    shutil.copytree(src, os.path.join(coverage_path, 'coverage'))
+    shutil.copy('.coveragerc', os.path.join(coverage_path, 'coverage', '.coveragerc'))
+
+    for root, dir_names, file_names in os.walk(coverage_path):
+        for name in dir_names + file_names:
+            os.chmod(os.path.join(root, name), stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+
+    for directory in 'output', 'logs':
+        os.mkdir(os.path.join(coverage_path, directory))
+        os.chmod(os.path.join(coverage_path, directory), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+
+    atexit.register(cleanup_coverage_dir)
+
+    return os.path.join(coverage_path, 'coverage')
+
+
+def cleanup_coverage_dir():
+    """Copy over coverage data from temporary directory and purge temporary directory."""
+    output_dir = os.path.join(coverage_path, 'output')
+
+    for filename in os.listdir(output_dir):
+        src = os.path.join(output_dir, filename)
+        dst = os.path.join(os.getcwd(), 'test', 'results', 'coverage')
+        shutil.copy(src, dst)
+
+    logs_dir = os.path.join(coverage_path, 'logs')
+
+    for filename in os.listdir(logs_dir):
+        random_suffix = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(8))
+        new_name = '%s.%s.log' % (os.path.splitext(os.path.basename(filename))[0], random_suffix)
+        src = os.path.join(logs_dir, filename)
+        dst = os.path.join(os.getcwd(), 'test', 'results', 'logs', new_name)
+        shutil.copy(src, dst)
+
+    shutil.rmtree(coverage_path)
+
+
 def run_command(args, cmd, capture=False, env=None, data=None, cwd=None, always=False, stdin=None, stdout=None,
                 cmd_verbosity=1, str_errors='strict'):
     """
@@ -130,7 +304,7 @@ def raw_command(cmd, capture=False, env=None, data=None, cwd=None, explain=False
 
     escaped_cmd = ' '.join(pipes.quote(c) for c in cmd)
 
-    display.info('Run command: %s' % escaped_cmd, verbosity=cmd_verbosity)
+    display.info('Run command: %s' % escaped_cmd, verbosity=cmd_verbosity, truncate=True)
     display.info('Working directory: %s' % cwd, verbosity=2)
 
     program = find_executable(cmd[0], cwd=cwd, path=env['PATH'], required='warning')
@@ -208,6 +382,10 @@ def common_environment():
         'HTTPTESTER',
         'LD_LIBRARY_PATH',
         'SSH_AUTH_SOCK',
+        # MacOS High Sierra Compatibility
+        # http://sealiesoftware.com/blog/archive/2017/6/5/Objective-C_and_fork_in_macOS_1013.html
+        'OBJC_DISABLE_INITIALIZE_FORK_SAFETY',
+        'ANSIBLE_KEEP_REMOTE_FILES',
     )
 
     env.update(pass_vars(required=required, optional=optional))
@@ -288,6 +466,25 @@ def is_binary_file(path):
         return b'\0' in path_fd.read(1024)
 
 
+def generate_password():
+    """Generate a random password.
+    :rtype: str
+    """
+    chars = [
+        string.ascii_letters,
+        string.digits,
+        string.ascii_letters,
+        string.digits,
+        '-',
+    ] * 4
+
+    password = ''.join([random.choice(char) for char in chars[:-1]])
+
+    display.sensitive.add(password)
+
+    return password
+
+
 class Display(object):
     """Manages color console output."""
     clear = '\033[0m'
@@ -311,6 +508,14 @@ class Display(object):
         self.warnings = []
         self.warnings_unique = set()
         self.info_stderr = False
+        self.rows = 0
+        self.columns = 0
+        self.truncate = 0
+        self.redact = False
+        self.sensitive = set()
+
+        if os.isatty(0):
+            self.rows, self.columns = unpack('HHHH', fcntl.ioctl(0, TIOCGWINSZ, pack('HHHH', 0, 0, 0, 0)))[:2]
 
     def __warning(self, message):
         """
@@ -354,21 +559,31 @@ class Display(object):
         """
         self.print_message('ERROR: %s' % message, color=self.red, fd=sys.stderr)
 
-    def info(self, message, verbosity=0):
+    def info(self, message, verbosity=0, truncate=False):
         """
         :type message: str
         :type verbosity: int
+        :type truncate: bool
         """
         if self.verbosity >= verbosity:
             color = self.verbosity_colors.get(verbosity, self.yellow)
-            self.print_message(message, color=color, fd=sys.stderr if self.info_stderr else sys.stdout)
+            self.print_message(message, color=color, fd=sys.stderr if self.info_stderr else sys.stdout, truncate=truncate)
 
-    def print_message(self, message, color=None, fd=sys.stdout):  # pylint: disable=locally-disabled, invalid-name
+    def print_message(self, message, color=None, fd=sys.stdout, truncate=False):  # pylint: disable=locally-disabled, invalid-name
         """
         :type message: str
         :type color: str | None
         :type fd: file
+        :type truncate: bool
         """
+        if self.redact and self.sensitive:
+            for item in self.sensitive:
+                message = message.replace(item, '*' * len(item))
+
+        if truncate:
+            if len(message) > self.truncate > 5:
+                message = message[:self.truncate - 5] + ' ...'
+
         if color and self.color:
             # convert color resets in message to desired color
             message = message.replace(self.clear, color)
@@ -443,6 +658,11 @@ class CommonConfig(object):
         self.explain = args.explain  # type: bool
         self.verbosity = args.verbosity  # type: int
         self.debug = args.debug  # type: bool
+        self.truncate = args.truncate  # type: int
+        self.redact = args.redact  # type: bool
+
+        if is_shippable():
+            self.redact = True
 
 
 def docker_qualify_image(name):
@@ -452,6 +672,8 @@ def docker_qualify_image(name):
     """
     if not name or any((c in name) for c in ('/', ':')):
         return name
+
+    name = get_docker_completion().get(name, name)
 
     return 'ansible/ansible:%s' % name
 

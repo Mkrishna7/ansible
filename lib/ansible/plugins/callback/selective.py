@@ -41,18 +41,18 @@ import difflib
 from ansible import constants as C
 from ansible.plugins.callback import CallbackBase
 from ansible.module_utils._text import to_text
-
+from ansible.utils.color import codeCodes
 
 DONT_COLORIZE = False
 COLORS = {
     'normal': '\033[0m',
-    'ok': C.COLOR_OK,
+    'ok': '\033[{0}m'.format(codeCodes[C.COLOR_OK]),
     'bold': '\033[1m',
     'not_so_bold': '\033[1m\033[34m',
-    'changed': C.COLOR_CHANGED,
-    'failed': C.COLOR_ERROR,
+    'changed': '\033[{0}m'.format(codeCodes[C.COLOR_CHANGED]),
+    'failed': '\033[{0}m'.format(codeCodes[C.COLOR_ERROR]),
     'endc': '\033[0m',
-    'skipped': C.COLOR_SKIP,
+    'skipped': '\033[{0}m'.format(codeCodes[C.COLOR_SKIP]),
 }
 
 
@@ -71,7 +71,7 @@ def colorize(msg, color):
     if DONT_COLORIZE:
         return msg
     else:
-        return '{}{}{}'.format(COLORS[color], msg, COLORS['endc'])
+        return '{0}{1}{2}'.format(COLORS[color], msg, COLORS['endc'])
 
 
 class CallbackModule(CallbackBase):
@@ -88,12 +88,12 @@ class CallbackModule(CallbackBase):
         self.last_task_name = None
         self.printed_last_task = False
 
-    def set_options(self, options):
+    def set_options(self, task_keys=None, var_options=None, direct=None):
 
-        super(CallbackModule, self).set_options(options)
+        super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
 
         global DONT_COLORIZE
-        DONT_COLORIZE = self._plugin_options['nocolor']
+        DONT_COLORIZE = self.get_option('nocolor')
 
     def _print_task(self, task_name=None):
         if task_name is None:
@@ -104,15 +104,15 @@ class CallbackModule(CallbackBase):
             line_length = 120
             if self.last_skipped:
                 print()
-            msg = colorize("# {} {}".format(task_name,
-                                            '*' * (line_length - len(task_name))), 'bold')
+            msg = colorize("# {0} {1}".format(task_name,
+                                              '*' * (line_length - len(task_name))), 'bold')
             print(msg)
 
     def _indent_text(self, text, indent_level):
         lines = text.splitlines()
         result_lines = []
         for l in lines:
-            result_lines.append("{}{}".format(' ' * indent_level, l))
+            result_lines.append("{0}{1}".format(' ' * indent_level, l))
         return '\n'.join(result_lines)
 
     def _print_diff(self, diff, indent_level):
@@ -145,19 +145,19 @@ class CallbackModule(CallbackBase):
             change_string = colorize('FAILED!!!', color)
         else:
             color = 'changed' if changed else 'ok'
-            change_string = colorize("changed={}".format(changed), color)
+            change_string = colorize("changed={0}".format(changed), color)
 
         msg = colorize(msg, color)
 
         line_length = 120
         spaces = ' ' * (40 - len(name) - indent_level)
-        line = "{}  * {}{}- {}".format(' ' * indent_level, name, spaces, change_string)
+        line = "{0}  * {1}{2}- {3}".format(' ' * indent_level, name, spaces, change_string)
 
         if len(msg) < 50:
-            line += ' -- {}'.format(msg)
-            print("{} {}---------".format(line, '-' * (line_length - len(line))))
+            line += ' -- {0}'.format(msg)
+            print("{0} {1}---------".format(line, '-' * (line_length - len(line))))
         else:
-            print("{} {}".format(line, '-' * (line_length - len(line))))
+            print("{0} {1}".format(line, '-' * (line_length - len(line))))
             print(self._indent_text(msg, indent_level + 4))
 
         if diff:
@@ -178,13 +178,10 @@ class CallbackModule(CallbackBase):
         self.last_task_name = task.get_name()
         self.printed_last_task = False
 
-    def v2_runner_on_ok(self, result, **kwargs):
+    def _print_task_result(self, result, error=False, **kwargs):
         """Run when a task finishes correctly."""
-        failed = result._result.get("failed")
-        unreachable = result._result.get("unreachable")
 
-        if 'print_action' in result._task.tags or failed or unreachable or \
-                self._display.verbosity > 1:
+        if 'print_action' in result._task.tags or error or self._display.verbosity > 1:
             self._print_task()
             self.last_skipped = False
             msg = to_text(result._result.get('msg', '')) or\
@@ -199,7 +196,7 @@ class CallbackModule(CallbackBase):
                                      msg,
                                      result._result.get('diff', None),
                                      is_host=True,
-                                     error=failed or unreachable,
+                                     error=error,
                                      stdout=result._result.get('module_stdout', None),
                                      stderr=stderr.strip(),
                                      )
@@ -240,7 +237,7 @@ class CallbackModule(CallbackBase):
             else:
                 color = 'ok'
 
-            msg = '{}    : ok={}\tchanged={}\tfailed={}\tunreachable={}'.format(
+            msg = '{0}    : ok={1}\tchanged={2}\tfailed={3}\tunreachable={4}'.format(
                 host, s['ok'], s['changed'], s['failures'], s['unreachable'])
             print(colorize(msg, color))
 
@@ -253,20 +250,27 @@ class CallbackModule(CallbackBase):
             line_length = 120
             spaces = ' ' * (31 - len(result._host.name) - 4)
 
-            line = "  * {}{}- {}".format(colorize(result._host.name, 'not_so_bold'),
-                                         spaces,
-                                         colorize("skipped", 'skipped'),)
+            line = "  * {0}{1}- {2}".format(colorize(result._host.name, 'not_so_bold'),
+                                            spaces,
+                                            colorize("skipped", 'skipped'),)
 
             reason = result._result.get('skipped_reason', '') or \
                 result._result.get('skip_reason', '')
             if len(reason) < 50:
-                line += ' -- {}'.format(reason)
-                print("{} {}---------".format(line, '-' * (line_length - len(line))))
+                line += ' -- {0}'.format(reason)
+                print("{0} {1}---------".format(line, '-' * (line_length - len(line))))
             else:
-                print("{} {}".format(line, '-' * (line_length - len(line))))
+                print("{0} {1}".format(line, '-' * (line_length - len(line))))
                 print(self._indent_text(reason, 8))
                 print(reason)
 
+    def v2_runner_on_ok(self, result, **kwargs):
+        self._print_task_result(result, error=False, **kwargs)
+
+    def v2_runner_on_failed(self, result, **kwargs):
+        self._print_task_result(result, error=True, **kwargs)
+
+    def v2_runner_on_unreachable(self, result, **kwargs):
+        self._print_task_result(result, error=True, **kwargs)
+
     v2_playbook_on_handler_task_start = v2_playbook_on_task_start
-    v2_runner_on_failed = v2_runner_on_ok
-    v2_runner_on_unreachable = v2_runner_on_ok

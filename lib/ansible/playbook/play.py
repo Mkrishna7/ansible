@@ -20,7 +20,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 from ansible import constants as C
-from ansible.errors import AnsibleParserError
+from ansible.errors import AnsibleParserError, AnsibleAssertionError
 from ansible.module_utils.six import string_types
 from ansible.playbook.attribute import FieldAttribute
 from ansible.playbook.base import Base
@@ -54,7 +54,6 @@ class Play(Base, Taggable, Become):
     """
 
     # =================================================================================
-    _name = FieldAttribute(isa='string', default='', always_post_validate=True)
     _hosts = FieldAttribute(isa='list', required=True, listof=string_types, always_post_validate=True)
 
     # Facts
@@ -116,7 +115,8 @@ class Play(Base, Taggable, Become):
         Adjusts play datastructure to cleanup old/legacy items
         '''
 
-        assert isinstance(ds, dict), 'while preprocessing data (%s), ds should be a dict but was a %s' % (ds, type(ds))
+        if not isinstance(ds, dict):
+            raise AnsibleAssertionError('while preprocessing data (%s), ds should be a dict but was a %s' % (ds, type(ds)))
 
         # The use of 'user' in the Play datastructure was deprecated to
         # line up with the same change for Tasks, due to the fact that
@@ -195,22 +195,23 @@ class Play(Base, Taggable, Become):
     def _load_vars_prompt(self, attr, ds):
         new_ds = preprocess_vars(ds)
         vars_prompts = []
-        for prompt_data in new_ds:
-            if 'name' not in prompt_data:
-                display.deprecated("Using the 'short form' for vars_prompt has been deprecated", version="2.7")
-                for vname, prompt in prompt_data.items():
-                    vars_prompts.append(dict(
-                        name=vname,
-                        prompt=prompt,
-                        default=None,
-                        private=None,
-                        confirm=None,
-                        encrypt=None,
-                        salt_size=None,
-                        salt=None,
-                    ))
-            else:
-                vars_prompts.append(prompt_data)
+        if new_ds is not None:
+            for prompt_data in new_ds:
+                if 'name' not in prompt_data:
+                    display.deprecated("Using the 'short form' for vars_prompt has been deprecated", version="2.7")
+                    for vname, prompt in prompt_data.items():
+                        vars_prompts.append(dict(
+                            name=vname,
+                            prompt=prompt,
+                            default=None,
+                            private=None,
+                            confirm=None,
+                            encrypt=None,
+                            salt_size=None,
+                            salt=None,
+                        ))
+                else:
+                    vars_prompts.append(prompt_data)
         return vars_prompts
 
     def _compile_roles(self):
@@ -277,6 +278,8 @@ class Play(Base, Taggable, Become):
         return self.vars.copy()
 
     def get_vars_files(self):
+        if self.vars_files is None:
+            return []
         return self.vars_files
 
     def get_handlers(self):

@@ -1,17 +1,15 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# (c) 2015, Bede Carroll <bc+github () bedecarroll.com>
+# Copyright: (c) 2015, Bede Carroll <bc+github () bedecarroll.com>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-
 ANSIBLE_METADATA = {'metadata_version': '1.1',
                     'status': ['preview'],
                     'supported_by': 'community'}
-
 
 DOCUMENTATION = '''
 ---
@@ -21,7 +19,8 @@ description:
     - Using VMware vCenter, move a virtual machine using vMotion to a different
       host.
 version_added: 2.2
-author: "Bede Carroll (@bedecarroll)"
+author:
+- Bede Carroll (@bedecarroll)
 notes:
     - Tested on vSphere 6.0
 requirements:
@@ -73,6 +72,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.vmware import (connect_to_api, find_hostsystem_by_name, find_vm_by_name,
                                          vmware_argument_spec, wait_for_task)
 
+
 def migrate_vm(vm_object, host_object):
     """
     Migrate virtual machine and return the task.
@@ -80,6 +80,7 @@ def migrate_vm(vm_object, host_object):
     relocate_spec = vim.vm.RelocateSpec(host=host_object)
     task_object = vm_object.Relocate(relocate_spec)
     return task_object
+
 
 def main():
 

@@ -175,12 +175,12 @@ class StrategyModule(StrategyBase):
             results = self._process_pending_results(iterator)
             host_results.extend(results)
 
+            self.update_active_connections(results)
+
             try:
                 included_files = IncludedFile.process_include_results(
                     host_results,
-                    self._tqm,
                     iterator=iterator,
-                    inventory=self._inventory,
                     loader=self._loader,
                     variable_manager=self._variable_manager
                 )
@@ -193,8 +193,7 @@ class StrategyModule(StrategyBase):
                     display.debug("collecting new blocks for %s" % included_file)
                     try:
                         if included_file._is_role:
-                            new_ir = included_file._task.copy()
-                            new_ir.vars.update(included_file._args)
+                            new_ir = self._copy_included_file(included_file)
 
                             new_blocks, handler_blocks = new_ir.get_block_list(
                                 play=iterator._play,

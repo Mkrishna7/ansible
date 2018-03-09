@@ -684,7 +684,7 @@ def create(client, subnet_id, allocation_id, client_token=None,
         else:
             result = DRY_RUN_GATEWAYS[0]
             result['create_time'] = datetime.datetime.utcnow()
-            result['nat_gateway_addresses'][0]['Allocation_id'] = allocation_id
+            result['nat_gateway_addresses'][0]['allocation_id'] = allocation_id
             result['subnet_id'] = subnet_id
 
         success = True
@@ -707,13 +707,13 @@ def create(client, subnet_id, allocation_id, client_token=None,
     except botocore.exceptions.ClientError as e:
         if "IdempotentParameterMismatch" in e.message:
             err_msg = (
-                'NAT Gateway does not support update and token has already been provided'
+                'NAT Gateway does not support update and token has already been provided: ' + str(e)
             )
         else:
             err_msg = str(e)
-            success = False
-            changed = False
-            result = None
+        success = False
+        changed = False
+        result = None
 
     return success, changed, err_msg, result
 

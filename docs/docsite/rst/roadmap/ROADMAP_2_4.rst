@@ -1,6 +1,6 @@
-============================
-Ansible by Red Hat, Core 2.4
-============================
+===========
+Ansible 2.4
+===========
 **Core Engine Freeze and Module Freeze: 15 August 2017**
 
 **Core and Curated Module Freeze: 15 August 2017**
@@ -128,7 +128,7 @@ Runtime Check on Modules for Blacklisting
 
 Disambiguate Includes
 ---------------------
-- Create import_x for 'static includes' (import_task, import_play, import_role)
+- Create import_x for 'static includes' (import_task, import_playbook, import_role)
 
   - Any directives are applied to the 'imported' tasks
 

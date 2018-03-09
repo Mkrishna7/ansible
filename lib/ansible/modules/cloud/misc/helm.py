@@ -48,7 +48,7 @@ options:
       - Whether to install C(present), remove C(absent), or purge C(purged) a package.
     required: false
     choices: ['absent', 'purged', 'present']
-    default: "installed"
+    default: "present"
   chart:
     description: |
       A map describing the chart to install. For example:
@@ -84,7 +84,7 @@ EXAMPLES = '''
       source:
         type: repo
         location: https://kubernetes-charts.storage.googleapis.com
-    state: installed
+    state: present
     name: my-memcached
     namespace: default
 
@@ -115,14 +115,19 @@ def install(module, tserver):
     namespace = module.params['namespace']
 
     chartb = chartbuilder.ChartBuilder(chart)
-    try:
+    r_matches = (x for x in tserver.list_releases()
+                 if x.name == name and x.namespace == namespace)
+    installed_release = next(r_matches, None)
+    if installed_release:
+        if installed_release.chart.metadata.version != chart['version']:
+            tserver.update_release(chartb.get_helm_chart(), False,
+                                   namespace, name=name, values=values)
+            changed = True
+    else:
         tserver.install_release(chartb.get_helm_chart(), namespace,
                                 dry_run=False, name=name,
                                 values=values)
         changed = True
-    except grpc._channel._Rendezvous as exc:
-        if "already exists" not in str(exc):
-            raise exc
 
     return dict(changed=changed)
 

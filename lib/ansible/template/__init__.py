@@ -27,6 +27,8 @@ import pwd
 import re
 import time
 
+from collections import Sequence, Mapping
+from functools import wraps
 from io import StringIO
 from numbers import Number
 
@@ -42,7 +44,7 @@ from jinja2.runtime import Context, StrictUndefined
 from jinja2.utils import concat as j2_concat
 
 from ansible import constants as C
-from ansible.errors import AnsibleError, AnsibleFilterError, AnsibleUndefinedVariable
+from ansible.errors import AnsibleError, AnsibleFilterError, AnsibleUndefinedVariable, AnsibleAssertionError
 from ansible.module_utils.six import string_types, text_type
 from ansible.module_utils._text import to_native, to_text, to_bytes
 from ansible.plugins.loader import filter_loader, lookup_loader, test_loader
@@ -155,6 +157,26 @@ def _count_newlines_from_end(in_str):
     except IndexError:
         # Uncommon cases: zero length string and string containing only newlines
         return i
+
+
+def tests_as_filters_warning(name, func):
+    '''
+    Closure to enable displaying a deprecation warning when tests are used as a filter
+
+    This closure is only used when registering ansible provided tests as filters
+
+    This function should be removed in 2.9 along with registering ansible provided tests as filters
+    in Templar._get_filters
+    '''
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        display.deprecated(
+            'Using tests as filters is deprecated. Instead of using `result|%(name)s` instead use '
+            '`result is %(name)s`' % dict(name=name),
+            version='2.9'
+        )
+        return func(*args, **kwargs)
+    return wrapper
 
 
 class AnsibleContext(Context):
@@ -283,7 +305,10 @@ class Templar:
         self._filters = dict()
         for fp in plugins:
             self._filters.update(fp.filters())
-        self._filters.update(self._get_tests())
+
+        # TODO: Remove registering tests as filters in 2.9
+        for name, func in self._get_tests().items():
+            self._filters[name] = tests_as_filters_warning(name, func)
 
         return self._filters.copy()
 
@@ -331,7 +356,7 @@ class Templar:
                 clean_list.append(self._clean_data(list_item))
             ret = clean_list
 
-        elif isinstance(orig_data, dict):
+        elif isinstance(orig_data, (dict, Mapping)):
             clean_dict = {}
             for k in orig_data:
                 clean_dict[self._clean_data(k)] = self._clean_data(orig_data[k])
@@ -387,7 +412,8 @@ class Templar:
         are being changed.
         '''
 
-        assert isinstance(variables, dict), "the type of 'variables' should be a dict but was a %s" % (type(variables))
+        if not isinstance(variables, dict):
+            raise AnsibleAssertionError("the type of 'variables' should be a dict but was a %s" % (type(variables)))
         self._available_variables = variables
         self._cached_result = {}
 
@@ -483,7 +509,7 @@ class Templar:
                     overrides=overrides,
                     disable_lookups=disable_lookups,
                 ) for v in variable]
-            elif isinstance(variable, dict):
+            elif isinstance(variable, (dict, Mapping)):
                 d = {}
                 # we don't use iteritems() here to avoid problems if the underlying dict
                 # changes sizes due to the templating, which can happen with hostvars
@@ -578,6 +604,11 @@ class Templar:
     def _fail_lookup(self, name, *args, **kwargs):
         raise AnsibleError("The lookup `%s` was found, however lookups were disabled from templating" % name)
 
+    def _query_lookup(self, name, *args, **kwargs):
+        ''' wrapper for lookup, force wantlist true'''
+        kwargs['wantlist'] = True
+        return self._lookup(name, *args, **kwargs)
+
     def _lookup(self, name, *args, **kwargs):
         instance = self._lookup_loader.get(name.lower(), loader=self._loader, templar=self)
 
@@ -605,7 +636,15 @@ class Templar:
                     try:
                         ran = UnsafeProxy(",".join(ran))
                     except TypeError:
-                        if isinstance(ran, list) and len(ran) == 1:
+                        # Lookup Plugins should always return lists.  Throw an error if that's not
+                        # the case:
+                        if not isinstance(ran, Sequence):
+                            raise AnsibleError("The lookup plugin '%s' did not return a list."
+                                               % name)
+
+                        # The TypeError we can recover from is when the value *inside* of the list
+                        # is not a string
+                        if len(ran) == 1:
                             ran = wrap_var(ran[0])
                         else:
                             ran = wrap_var(ran)
@@ -660,9 +699,10 @@ class Templar:
                     return data
 
             if disable_lookups:
-                t.globals['lookup'] = self._fail_lookup
+                t.globals['query'] = t.globals['q'] = t.globals['lookup'] = self._fail_lookup
             else:
                 t.globals['lookup'] = self._lookup
+                t.globals['query'] = t.globals['q'] = self._query_lookup
 
             t.globals['finalize'] = self._finalize
 
@@ -705,7 +745,7 @@ class Templar:
             if fail_on_undefined:
                 raise AnsibleUndefinedVariable(e)
             else:
-                # TODO: return warning about undefined var
+                display.debug("Ignoring undefined failure: %s" % to_text(e))
                 return data
 
     # for backwards compatibility in case anyone is using old private method directly

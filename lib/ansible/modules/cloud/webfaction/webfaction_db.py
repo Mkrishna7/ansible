@@ -55,7 +55,7 @@ options:
         description:
             - The password for the new database user.
         required: false
-        default: None
+        default: null
 
     login_name:
         description:
@@ -70,7 +70,7 @@ options:
     machine:
         description:
             - The machine name to use (optional for accounts with only one machine)
-        required: false
+        default: false
 '''
 
 EXAMPLES = '''
@@ -91,32 +91,31 @@ EXAMPLES = '''
 
 '''
 
-import xmlrpclib
-
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.six.moves import xmlrpc_client
 
 
-webfaction = xmlrpclib.ServerProxy('https://api.webfaction.com/')
+webfaction = xmlrpc_client.ServerProxy('https://api.webfaction.com/')
 
 
 def main():
 
     module = AnsibleModule(
-        argument_spec = dict(
-            name = dict(required=True),
-            state = dict(required=False, choices=['present', 'absent'], default='present'),
+        argument_spec=dict(
+            name=dict(required=True),
+            state=dict(required=False, choices=['present', 'absent'], default='present'),
             # You can specify an IP address or hostname.
-            type = dict(required=True),
-            password = dict(required=False, default=None, no_log=True),
-            login_name = dict(required=True),
-            login_password = dict(required=True, no_log=True),
-            machine = dict(required=False, default=False),
+            type=dict(required=True, choices=['mysql', 'postgresql']),
+            password=dict(required=False, default=None, no_log=True),
+            login_name=dict(required=True),
+            login_password=dict(required=True, no_log=True),
+            machine=dict(required=False, default=False),
         ),
         supports_check_mode=True
     )
-    db_name  = module.params['name']
+    db_name = module.params['name']
     db_state = module.params['state']
-    db_type  = module.params['type']
+    db_type = module.params['type']
     db_passwd = module.params['password']
 
     if module.params['machine']:
@@ -153,9 +152,8 @@ def main():
 
             # If it exists with the right type, we don't change anything.
             module.exit_json(
-                changed = False,
+                changed=False,
             )
-
 
         if not module.check_mode:
             # If this isn't a dry run, create the db
@@ -172,7 +170,7 @@ def main():
         if not module.check_mode:
 
             if not (existing_db or existing_user):
-                module.exit_json(changed = False,)
+                module.exit_json(changed=False,)
 
             if existing_db:
                 # Delete the db if it exists
@@ -190,8 +188,8 @@ def main():
         module.fail_json(msg="Unknown state specified: {}".format(db_state))
 
     module.exit_json(
-        changed = True,
-        result = result
+        changed=True,
+        result=result
     )
 
 
