@@ -36,8 +36,7 @@ description:
       U(https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-8)"
    - "Although the defaults are chosen so that the module can be used with
       the Let's Encrypt CA, the module can be used with any service using the ACME
-      v1 or v2 protocol. I(Warning): ACME v2 support is currently experimental, as
-      the Let's Encrypt production ACME v2 endpoint is still under development."
+      v1 or v2 protocol."
    - "At least one of C(dest) and C(fullchain_dest) must be specified."
 requirements:
   - "python >= 2.6"
@@ -77,6 +76,9 @@ options:
          U(https://letsencrypt.org/docs/staging-environment/)"
       - "The production Let's Encrypt ACME v1 directory URL, which produces properly
          trusted certificates, is U(https://acme-v01.api.letsencrypt.org/directory)."
+      - "The production Let's Encrypt ACME v2 directory URL, which produces properly
+         trusted certificates, including wildcard certificates, is
+         U(https://acme-v02.api.letsencrypt.org/directory)."
     default: https://acme-staging.api.letsencrypt.org/directory
   acme_version:
     description:
@@ -102,8 +104,8 @@ options:
       - "Boolean indicating whether you agree to the terms of service document."
       - "ACME servers can require this to be true."
       - This option will only be used when C(acme_version) is not 1.
-    default: no
     type: bool
+    default: 'no'
     version_added: "2.5"
   challenge:
     description: The challenge to be performed.
@@ -155,8 +157,8 @@ options:
       - Whether calls to the ACME directory will validate TLS certificates.
       - I(Warning:) Should I(only ever) be set to C(false) for testing purposes,
         for example when testing against a local Pebble server.
-    default: yes
     type: bool
+    default: 'yes'
     version_added: 2.5
   deactivate_authzs:
     description:
@@ -166,8 +168,8 @@ options:
          for a certain amount of time, and can be used to issue certificates
          without having to re-authenticate the domain. This can be a security
          concern. "
-    default: no
     type: bool
+    default: 'no'
     version_added: 2.6
   force:
     description:
@@ -175,8 +177,8 @@ options:
         existing certificate is still valid.
       - This is especially helpful when having an updated CSR e.g. with
         additional domains for which a new certificate is desired.
-    default: no
     type: bool
+    default: 'no'
     version_added: 2.6
 '''
 
@@ -630,40 +632,44 @@ class ACMEAccount(object):
             }
         elif account_key_type == 'ec':
             pub_data = re.search(
-                r"pub:\s*\n\s+04:([a-f0-9\:\s]+?)\nASN1 OID: (\S+)\nNIST CURVE: (\S+)",
+                r"pub:\s*\n\s+04:([a-f0-9\:\s]+?)\nASN1 OID: (\S+)(?:\nNIST CURVE: (\S+))?",
                 to_text(out, errors='surrogate_or_strict'), re.MULTILINE | re.DOTALL)
             if pub_data is None:
                 return 'cannot parse elliptic curve key', {}
             pub_hex = binascii.unhexlify(re.sub(r"(\s|:)", "", pub_data.group(1)).encode("utf-8"))
-            curve = pub_data.group(3).lower()
-            if curve == 'p-256':
+            asn1_oid_curve = pub_data.group(2).lower()
+            nist_curve = pub_data.group(3).lower() if pub_data.group(3) else None
+            if asn1_oid_curve == 'prime256v1' or nist_curve == 'p-256':
                 bits = 256
                 alg = 'ES256'
                 hash = 'sha256'
                 point_size = 32
-            elif curve == 'p-384':
+                curve = 'P-256'
+            elif asn1_oid_curve == 'secp384r1' or nist_curve == 'p-384':
                 bits = 384
                 alg = 'ES384'
                 hash = 'sha384'
                 point_size = 48
-            elif curve == 'p-521':
+                curve = 'P-384'
+            elif asn1_oid_curve == 'secp521r1' or nist_curve == 'p-521':
                 # Not yet supported on Let's Encrypt side, see
                 # https://github.com/letsencrypt/boulder/issues/2217
                 bits = 521
                 alg = 'ES512'
                 hash = 'sha512'
                 point_size = 66
+                curve = 'P-521'
             else:
-                return 'unknown elliptic curve: %s' % curve, {}
+                return 'unknown elliptic curve: %s / %s' % (asn1_oid_curve, nist_curve), {}
             bytes = (bits + 7) // 8
             if len(pub_hex) != 2 * bytes:
-                return 'bad elliptic curve point (%s)' % curve, {}
+                return 'bad elliptic curve point (%s / %s)' % (asn1_oid_curve, nist_curve), {}
             return None, {
                 'type': 'ec',
                 'alg': alg,
                 'jwk': {
                     "kty": "EC",
-                    "crv": curve.upper(),
+                    "crv": curve,
                     "x": nopad_b64(pub_hex[:bytes]),
                     "y": nopad_b64(pub_hex[bytes:]),
                 },

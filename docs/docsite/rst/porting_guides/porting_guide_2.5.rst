@@ -99,7 +99,7 @@ In addition to the deprecation warnings, many new tests have been introduced tha
 
     when: result is successful
 
-See :doc:`playbooks_tests` for more information.
+See :ref:`playbook_tests` for more information.
 
 Additionally, a script was created to assist in the conversion for tests using filter syntax to proper jinja test syntax. This script has been used to convert all of the Ansible integration tests to the correct format. There are a few limitations documented, and all changes made by this script should be evaluated for correctness before executing the modified playbooks. The script can be found at `https://github.com/ansible/ansible/blob/devel/hacking/fix_test_syntax.py <https://github.com/ansible/ansible/blob/devel/hacking/fix_test_syntax.py>`_.
 
@@ -181,7 +181,7 @@ Shell plugins have been migrated to the new plugin configuration framework. It i
 
 For example, ``system_temps`` is a new setting that allows you to control what Ansible will consider a 'system temporary dir'. This is used when escalating privileges for a non-administrative user. Previously this was hardcoded to '/tmp', which some systems cannot use for privilege escalation. This setting now defaults to ``[ '/var/tmp', '/tmp']``.
 
-Another new setting is ``admin_users`` which allows you to specify a list of users to be considered 'administrators'. Previouslu this was hardcoded to ``root``. It now it defaults to ``[root, toor, admin]``.  This information is used when choosing between your ``remote_temp`` and ``system_temps`` directory.
+Another new setting is ``admin_users`` which allows you to specify a list of users to be considered 'administrators'. Previously this was hardcoded to ``root``. It now it defaults to ``[root, toor, admin]``.  This information is used when choosing between your ``remote_temp`` and ``system_temps`` directory.
 
 For a full list, check the shell plugin you are using, the default shell plugin is ``sh``.
 
@@ -271,4 +271,4 @@ NEW In Ansible 2.5
    from ansible.module_utils.network.vyos.vyos import get_config, load_config
 
 
-See the module utilities developer guide see :doc:`dev_guide/developing_module_utilities` for more information.
+See the module utilities developer guide see :ref:`appendix_module_utilities` for more information.

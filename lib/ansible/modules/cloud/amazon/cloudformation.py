@@ -28,13 +28,12 @@ options:
   disable_rollback:
     description:
       - If a stacks fails to form, rollback will remove the stack
-    required: false
-    default: "false"
-    choices: [ "true", "false" ]
+    type: bool
+    default: 'no'
   template_parameters:
     description:
-      - a list of hashes of all the template variables for the stack
-    required: false
+      - A list of hashes of all the template variables for the stack. The value can be a string or a dict.
+      - Dict can be used to set additional template parameter attributes like UsePreviousValue (see example).
     default: {}
   state:
     description:
@@ -42,7 +41,6 @@ options:
         If state is "absent", stack will be removed.
     default: present
     choices: [ present, absent ]
-    required: false
   template:
     description:
       - The local path of the cloudformation template.
@@ -51,26 +49,18 @@ options:
       - If 'state' is 'present' and the stack does not exist yet, either 'template', 'template_body' or 'template_url'
         must be specified (but only one of them). If 'state' ispresent, the stack does exist, and neither 'template',
         'template_body' nor 'template_url' are specified, the previous template will be reused.
-    required: false
-    default: null
   notification_arns:
     description:
       - The Simple Notification Service (SNS) topic ARNs to publish stack related events.
-    required: false
-    default: null
     version_added: "2.0"
   stack_policy:
     description:
       - the path of the cloudformation stack policy. A policy cannot be removed once placed, but it can be modified.
         (for instance, [allow all updates](http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/protect-stack-resources.html#d0e9051)
-    required: false
-    default: null
     version_added: "1.9"
   tags:
     description:
       - Dictionary of tags to associate with stack and its resources during stack creation. Can be updated later, updating tags removes previous entries.
-    required: false
-    default: null
     version_added: "1.4"
   template_url:
     description:
@@ -79,7 +69,6 @@ options:
       - If 'state' is 'present' and the stack does not exist yet, either 'template', 'template_body' or 'template_url'
         must be specified (but only one of them). If 'state' ispresent, the stack does exist, and neither 'template',
         'template_body' nor 'template_url' are specified, the previous template will be reused.
-    required: false
     version_added: "2.0"
   create_changeset:
     description:
@@ -87,16 +76,13 @@ options:
         See the AWS Change Sets docs U(http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html).
         WARNING: if the stack does not exist, it will be created without changeset. If the state is absent, the stack will be deleted immediately with no
         changeset."
-    required: false
-    default: false
+    default: 'no'
     version_added: "2.4"
   changeset_name:
     description:
       - Name given to the changeset when creating a changeset, only used when create_changeset is true. By default a name prefixed with Ansible-STACKNAME
         is generated based on input parameters.
         See the AWS Change Sets docs U(http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html)
-    required: false
-    default: null
     version_added: "2.4"
   template_format:
     description:
@@ -104,14 +90,11 @@ options:
       This parameter is ignored since Ansible 2.3.
     default: json
     choices: [ json, yaml ]
-    required: false
     version_added: "2.0"
   role_arn:
     description:
     - The role that AWS CloudFormation assumes to create the stack. See the AWS CloudFormation Service Role
       docs U(http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
-    required: false
-    default: null
     version_added: "2.3"
   termination_protection:
     description:
@@ -123,7 +106,6 @@ options:
       - If 'state' is 'present' and the stack does not exist yet, either 'template', 'template_body' or 'template_url'
         must be specified (but only one of them). If 'state' ispresent, the stack does exist, and neither 'template',
         'template_body' nor 'template_url' are specified, the previous template will be reused.
-    required: false
     version_added: "2.5"
 
 author: "James S. Martin (@jsmartin)"
@@ -197,6 +179,24 @@ EXAMPLES = '''
       ClusterSize: 3
     tags:
       Stack: ansible-cloudformation
+
+# Pass a template parameter which uses Cloudformation's UsePreviousValue attribute
+# When use_previous_value is set to True, the given value will be ignored and
+# Cloudformation will use the value from a previously submitted template.
+# If use_previous_value is set to False (default) the given value is used.
+- cloudformation:
+    stack_name: "ansible-cloudformation"
+    state: "present"
+    region: "us-east-1"
+    template: "files/cloudformation-example.json"
+    template_parameters:
+      DBSnapshotIdentifier:
+        use_previous_value: True
+        value: arn:aws:rds:es-east-1:000000000000:snapshot:rds:my-db-snapshot
+      DBName:
+        use_previous_value: True
+    tags:
+      Stack: "ansible-cloudformation"
 
 # Enable termination protection on a stack.
 # If the stack already exists, this will update its termination protection
@@ -586,7 +586,24 @@ def main():
         stack_params['StackPolicyBody'] = open(module.params['stack_policy'], 'r').read()
 
     template_parameters = module.params['template_parameters']
-    stack_params['Parameters'] = [{'ParameterKey': k, 'ParameterValue': str(v)} for k, v in template_parameters.items()]
+
+    stack_params['Parameters'] = []
+    for k, v in template_parameters.items():
+        if isinstance(v, dict):
+            # set parameter based on a dict to allow additional CFN Parameter Attributes
+            param = dict(ParameterKey=k)
+
+            if 'value' in v:
+                param['ParameterValue'] = str(v['value'])
+
+            if 'use_previous_value' in v and bool(v['use_previous_value']):
+                param['UsePreviousValue'] = True
+                param.pop('ParameterValue', None)
+
+            stack_params['Parameters'].append(param)
+        else:
+            # allow default k/v configuration to set a template parameter
+            stack_params['Parameters'].append({'ParameterKey': k, 'ParameterValue': str(v)})
 
     if isinstance(module.params.get('tags'), dict):
         stack_params['Tags'] = ansible.module_utils.ec2.ansible_dict_to_boto3_tag_list(module.params['tags'])

@@ -60,6 +60,8 @@ options:
   force:
     description:
       - 'Corresponds to the C(--force-yes) to I(apt-get) and implies C(allow_unauthenticated: yes)'
+      - "This option will disable checking both the packages' signatures and the certificates of the
+        web servers they are downloaded from."
       - 'This option *is not* the equivalent of passing the C(-f) flag to I(apt-get) on the command line'
       - '**This is a destructive operation with the potential to destroy your system, and it should almost never be used.**
          Please also see C(man apt-get) for more information.'
@@ -68,6 +70,7 @@ options:
   allow_unauthenticated:
     description:
       - Ignore if packages cannot be authenticated. This is useful for bootstrapping environments that manage their own apt-key setup.
+      - 'C(allow_unauthenticated) is only supported with state: I(install)/I(present)'
     type: bool
     default: 'no'
     version_added: "2.1"
@@ -953,14 +956,15 @@ def main():
             tdelta = datetime.timedelta(seconds=p['cache_valid_time'])
             if not mtimestamp + tdelta >= now:
                 # Retry to update the cache up to 3 times
+                err = ''
                 for retry in range(3):
                     try:
                         cache.update()
                         break
-                    except apt.cache.FetchFailedException:
-                        pass
+                    except apt.cache.FetchFailedException as e:
+                        err = to_native(e)
                 else:
-                    module.fail_json(msg='Failed to update apt cache.')
+                    module.fail_json(msg='Failed to update apt cache: %s' % err)
                 cache.open(progress=None)
                 updated_cache = True
                 mtimestamp, updated_cache_time = get_updated_cache_time()
